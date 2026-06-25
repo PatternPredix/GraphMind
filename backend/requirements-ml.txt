@@ -1,0 +1,30 @@
+# Optional ML dependencies for auto-annotation and rule application.
+# The server runs without these; the Auto-Annotate jobs and embedding-based
+# relation rules need them. (Keyword/gazetteer NER rules work without any of
+# these — they are pure Python.)
+#
+# GPU notes:
+#  - Windows/Linux with NVIDIA GPU: install the CUDA build of torch first:
+#      pip install torch --index-url https://download.pytorch.org/whl/cu121
+#  - Apple Silicon Macs (M1-M4): the default pip torch wheel already includes
+#    Metal (MPS) acceleration - nothing extra to install.
+# Training auto-detects CUDA, then MPS, then falls back to CPU.
+
+# spaCy is pinned to the 3.7.x line so it can load the published en_core_web_trf
+# transformer pipeline (https://huggingface.co/spacy/en_core_web_trf — model
+# 3.7.3 requires spaCy >=3.7.2,<3.8.0). Re-check that model's compatibility
+# before ever bumping to 3.8.
+spacy>=3.7.2,<3.8
+torch>=2.1
+transformers>=4.38
+numpy>=1.24
+# Sentence embeddings for relation rules (a BERT-family bi-encoder, not an LLM).
+sentence-transformers>=2.6
+
+# Optional transformer NER base model. To train on top of the RoBERTa pipeline,
+# set NER_BASE_MODEL=en_core_web_trf in .env and install the model (~436 MB)
+# after the packages above:
+#   python -m spacy download en_core_web_trf
+# The 3.7.3 model requires spaCy >=3.7.2,<3.8.0 (pinned above) and brings its own
+# transformer runtime (spacy-curated-transformers), so it does NOT constrain the
+# Hugging Face `transformers` version used by the relation-extraction trainer.
