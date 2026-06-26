@@ -2,7 +2,7 @@
   "name": "graphmind-frontend",
   "private": true,
   "version": "1.0.0",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "author": "PatternPredix, LLC",
   "type": "module",
   "scripts": {

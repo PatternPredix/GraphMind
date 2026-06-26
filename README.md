@@ -279,6 +279,8 @@ metadata. API docs (Swagger): `http://<server>:8000/docs`.
 
 ## License
 
-Copyright © 2026 PatternPredix, LLC. Released under the [MIT License](LICENSE).
-You are free to use, modify, and distribute it, including commercially, with
-attribution.
+Copyright © 2026 PatternPredix, LLC. All Rights Reserved.
+
+Proprietary and confidential. See [LICENSE](LICENSE). No use, copying,
+modification, or distribution is permitted without the prior written
+permission of PatternPredix, LLC.
