@@ -5,8 +5,8 @@ backend/.env
 *.db-wal
 *.db-shm
 
-# Local Claude Code settings (machine-specific; may contain tokens/passwords)
-.claude/settings.local.json
+# Claude Code tooling config (machine/editor-specific; may contain tokens)
+.claude/
 
 # Python
 __pycache__/
