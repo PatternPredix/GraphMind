@@ -129,8 +129,9 @@ Run the test suites:
 
 ```bash
 cd backend
-.venv/bin/python smoke_test.py      # 31 API checks
-.venv/bin/python smoke_test_ml.py   # live NER train + auto-annotate flow (needs spaCy)
+.venv/bin/python smoke_test.py       # 31 API checks
+.venv/bin/python smoke_test_ml.py    # live NER train + auto-annotate flow (needs spaCy)
+.venv/bin/python smoke_test_rules.py # keyword rules + embedding relation rules
 ```
 
 ---
