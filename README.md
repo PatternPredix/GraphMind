@@ -90,6 +90,31 @@ open `http://<server-name>:8000` from any machine on the network.
 
 Unattended install: `install_windows.bat -WithML -AutoStart`
 
+#### Offline / air-gapped install
+
+The installer runs without internet using `-Offline`, which disables winget and
+never contacts PyPI or the npm registry. Prepare these on an online machine and
+copy them across:
+
+- **Python 3.10+** installed on the target (install it manually first — winget
+  is not used in offline mode).
+- **Python packages** — either already installed into `backend\.venv`, or a
+  folder of wheels downloaded on the online machine and passed with `-WheelDir`:
+  ```bat
+  pip download -r backend\requirements.txt -r backend\requirements-ml.txt -d wheels
+  ```
+- **Node.js** — pass the downloaded installer with `-NodeInstaller node-vXX.msi`
+  (not needed if npm is already installed, or if you pre-build the frontend).
+- **Frontend** — simplest offline path: build it on the online machine
+  (`cd frontend && npm install && npm run build`) and copy the generated
+  `backend\static` folder to the target; then no Node/npm is needed at all.
+  Alternatively copy `frontend\node_modules` over and the installer runs
+  `npm run build` without network access.
+
+```bat
+install_windows.bat -Offline -WithML -WheelDir wheels -NodeInstaller node-v20.msi
+```
+
 ### macOS (Apple Silicon M1–M4 and Intel)
 
 ```bash

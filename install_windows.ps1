@@ -10,14 +10,37 @@
 #   7. Optionally registers a Scheduled Task so the server starts with Windows
 #
 # Parameters (all optional):
-#   -WithML        install ML dependencies without asking
-#   -NoML          skip ML dependencies without asking
-#   -AutoStart     register the start-with-Windows scheduled task
-#   -Port 8000     port to use for firewall rule / shortcuts
+#   -WithML             install ML dependencies without asking
+#   -NoML               skip ML dependencies without asking
+#   -AutoStart          register the start-with-Windows scheduled task
+#   -Port 8000          port for the firewall rule / shortcuts
+#   -Offline            air-gapped install: never use winget or the internet
+#   -NodeInstaller PATH local Node.js installer (.msi/.exe) to run if npm is missing
+#   -WheelDir PATH      folder of pre-downloaded pip wheels (used with
+#                       --no-index --find-links)
+#
+# OFFLINE / AIR-GAPPED INSTALL — prepare these on an online machine, copy them
+# to the target, then run:   install_windows.bat -Offline [-WithML]
+#   * Python 3.10+ already installed on the target (winget is NOT used offline;
+#     install Python manually first if needed).
+#   * Python packages: either already installed into backend\.venv, OR a folder
+#     of wheels downloaded on the online machine with:
+#         pip download -r backend\requirements.txt -r backend\requirements-ml.txt -d wheels
+#     then pass  -WheelDir wheels
+#   * Node.js: pass the downloaded installer with  -NodeInstaller node-vXX.msi
+#     (not needed if npm is already on PATH, or if the frontend is pre-built).
+#   * Frontend (surest offline path): pre-build it on the online machine
+#         cd frontend; npm install; npm run build
+#     and copy the generated backend\static folder to the target — then no
+#     Node/npm is needed at all. Alternatively copy frontend\node_modules over
+#     and this installer runs "npm run build" without touching the network.
 param(
     [switch]$WithML,
     [switch]$NoML,
     [switch]$AutoStart,
+    [switch]$Offline,
+    [string]$NodeInstaller = "",
+    [string]$WheelDir = "",
     [int]$Port = 8000
 )
 
@@ -40,6 +63,19 @@ function Invoke-Python([string]$command, [string[]]$extraArgs) {
 
 Write-Host "GraphMind (NER & RE annotation for knowledge graphs) - Windows installer" -ForegroundColor White
 Write-Host "Install location: $Root"
+if ($Offline) { Warn "Offline mode: winget and the internet will not be used." }
+
+# pip network flags: in -Offline mode pip never reaches PyPI; if a local wheel
+# folder is provided it installs from there, otherwise from what is already
+# installed in the venv.
+$pipNet = @()
+if ($Offline) {
+    $pipNet = @("--no-index")
+    if ($WheelDir) {
+        if (-not (Test-Path $WheelDir)) { Write-Error "-WheelDir '$WheelDir' does not exist." }
+        $pipNet += @("--find-links", (Resolve-Path $WheelDir).Path)
+    }
+}
 
 # ---------- 1. Python ----------
 Step "Locating Python 3.10+"
@@ -52,7 +88,9 @@ foreach ($candidate in @("py -3.12", "py -3.11", "py -3.10", "py -3", "python"))
 }
 if (-not $python) {
     Warn "Python 3.10+ not found."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
+    if ($Offline) {
+        Write-Error "Offline mode: install Python 3.12 from your local installer (check 'Add python.exe to PATH'), then re-run."
+    } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
         Step "Installing Python 3.12 via winget"
         winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements
         $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
@@ -72,8 +110,8 @@ if (-not (Test-Path "backend\.venv")) {
 # Use the venv's python for all pip work: upgrading pip via pip.exe directly
 # fails on Windows ("Access is denied") because the running exe is locked.
 $py = "backend\.venv\Scripts\python.exe"
-& $py -m pip install --quiet --upgrade pip
-& $py -m pip install --quiet -r backend\requirements.txt
+if (-not $Offline) { & $py -m pip install --quiet --upgrade pip }
+& $py -m pip install --quiet @pipNet -r backend\requirements.txt
 Ok "Server dependencies installed."
 
 # ---------- 3. ML dependencies ----------
@@ -85,13 +123,17 @@ elseif (-not $NoML) {
 }
 if ($installML) {
     Step "Installing ML dependencies (this can take several minutes)"
-    $gpu = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
-           Where-Object { $_.Name -match "NVIDIA" }
-    if ($gpu) {
-        Ok "NVIDIA GPU detected ($($gpu[0].Name)) - installing CUDA build of PyTorch"
-        & $py -m pip install torch --index-url https://download.pytorch.org/whl/cu121
+    if (-not $Offline) {
+        # CUDA build of PyTorch is fetched from a special index (online only).
+        # Offline installs must supply torch via -WheelDir or the existing venv.
+        $gpu = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+               Where-Object { $_.Name -match "NVIDIA" }
+        if ($gpu) {
+            Ok "NVIDIA GPU detected ($($gpu[0].Name)) - installing CUDA build of PyTorch"
+            & $py -m pip install torch --index-url https://download.pytorch.org/whl/cu121
+        }
     }
-    & $py -m pip install -r backend\requirements-ml.txt
+    & $py -m pip install @pipNet -r backend\requirements-ml.txt
     Ok "ML dependencies installed."
 } else {
     Warn "Skipping ML dependencies. Install later with:"
@@ -120,10 +162,29 @@ SECRET_KEY=$secret
 }
 
 # ---------- 5. Frontend ----------
-if (-not (Test-Path "backend\static\index.html")) {
+if (Test-Path "backend\static\index.html") {
+    # Pre-built frontend present (e.g. copied from an online machine). This is
+    # the simplest offline path: no Node/npm needed at all.
+    Step "Frontend already built - skipping (delete backend\static to rebuild)"
+} else {
     Step "Building frontend"
+
+    # Ensure npm is available.
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        if (Get-Command winget -ErrorAction SilentlyContinue) {
+        if ($NodeInstaller) {
+            if (-not (Test-Path $NodeInstaller)) { Write-Error "-NodeInstaller '$NodeInstaller' not found." }
+            $nodePath = (Resolve-Path $NodeInstaller).Path
+            Step "Installing Node.js from $nodePath"
+            if ([System.IO.Path]::GetExtension($nodePath).ToLower() -eq ".msi") {
+                Start-Process msiexec.exe -ArgumentList "/i `"$nodePath`" /qn /norestart" -Wait
+            } else {
+                Start-Process -FilePath $nodePath -Wait
+            }
+            $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                        [Environment]::GetEnvironmentVariable("Path", "User")
+        } elseif ($Offline) {
+            Write-Error "npm not found. Pass the downloaded Node.js installer with -NodeInstaller <path>, OR pre-build the frontend on an online machine and copy its backend\static folder here."
+        } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
             Step "Installing Node.js LTS via winget"
             winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
             $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
@@ -132,13 +193,24 @@ if (-not (Test-Path "backend\static\index.html")) {
             Write-Error "Node.js is required to build the frontend. Install from https://nodejs.org and re-run."
         }
     }
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        Write-Error "npm is still not on PATH after installing Node.js. Open a NEW terminal so PATH refreshes and re-run, or pre-build the frontend and copy backend\static here."
+    }
+
     Push-Location frontend
-    npm install --no-fund --no-audit
+    if (Test-Path "node_modules") {
+        # Dependencies already vendored (copied from an online machine) — build
+        # directly without touching the network.
+        Ok "Using existing frontend\node_modules (skipping npm install)."
+    } elseif ($Offline) {
+        Step "npm install (offline — from the local npm cache)"
+        npm install --offline --no-fund --no-audit
+    } else {
+        npm install --no-fund --no-audit
+    }
     npm run build
     Pop-Location
     Ok "Frontend built into backend\static."
-} else {
-    Step "Frontend already built - skipping (delete backend\static to rebuild)"
 }
 
 # ---------- 6. Firewall ----------
